@@ -25,6 +25,12 @@ A comprehensive Python script for managing web browsers on Linux systems. This t
   - Snap
   - Flatpak
 
+- Enhanced Chrome installation with universal Linux compatibility
+  - Works across all major distributions (Debian, Ubuntu, Kali, ParrotOS, Fedora, Arch, etc.)
+  - Intelligent dependency resolution
+  - Multiple installation methods with automatic fallbacks
+  - Robust error handling
+
 - Beautiful terminal interface with colored output
 - Cross-distribution compatibility
 - Multiple installation methods (system packages, Snap, Flatpak)
@@ -66,6 +72,14 @@ The script provides an interactive menu-driven interface:
 2. **Uninstall Browser**: Remove installed browsers
 3. **Refresh Browser List**: Update the list of installed browsers
 4. **Exit**: Quit the application
+
+## 🔄 Recent Updates (May 2025)
+
+- Enhanced Chrome installation for universal Linux compatibility
+- Improved dependency resolution for Debian-based distributions (including Kali Linux)
+- Added multiple fallback methods for browser installation
+- Improved error handling and recovery
+- Better support for diverse Linux distributions
 
 ## 📝 Note
 
