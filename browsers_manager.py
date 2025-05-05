@@ -382,111 +382,381 @@ class BrowserManager:
             
             # Special handling for different browsers and distributions
             if browser_id == 'chrome':
-                if distro_family in ['debian', 'ubuntu']:
+                # Universal Chrome installation for all Linux distributions
+                try:
+                    # Create a temporary directory for downloading
+                    temp_dir = "/tmp/chrome_install"
+                    os.makedirs(temp_dir, exist_ok=True)
+                    os.chdir(temp_dir)
+                    
+                    # Step 1: Download Chrome .deb package
+                    print(colored("Downloading Google Chrome...", "yellow"))
+                    chrome_url = "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
+                    chrome_deb = os.path.join(temp_dir, "chrome.deb")
+                    
                     try:
-                        print(colored("Adding Google Chrome repository...", "yellow"))
-                        self.run_command("wget -q -O /tmp/linux_signing_key.pub https://dl.google.com/linux/linux_signing_key.pub")
-                        self.run_command("sudo apt-key add /tmp/linux_signing_key.pub")
-                        self.run_command("echo 'deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main' | sudo tee /etc/apt/sources.list.d/google-chrome.list")
-                        self.run_command("sudo apt update")
-                    except Exception as e:
-                        print(colored("Failed to add Google Chrome repository. Trying alternative installation...", "yellow"))
-                        # Try downloading and installing the DEB package directly
+                        self.run_command(f"wget {chrome_url} -O {chrome_deb}")
+                    except Exception:
+                        # Fallback to curl if wget fails
                         try:
-                            print(colored("Downloading Google Chrome...", "yellow"))
-                            self.run_command("wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/chrome.deb")
-                            print(colored("Installing Google Chrome...", "yellow"))
-                            self.run_command("sudo dpkg -i /tmp/chrome.deb || sudo apt-get -f install -y")
-                            self.run_command("rm /tmp/chrome.deb")
-                            print(colored("Google Chrome installed successfully!", "green"))
-                            return True
+                            self.run_command(f"curl -L {chrome_url} -o {chrome_deb}")
                         except Exception as e:
-                            print(colored(f"Failed to install Google Chrome: {str(e)}", "red"))
+                            print(colored(f"Failed to download Chrome: {str(e)}", "red"))
                             return False
-                elif distro_family == 'fedora':
-                    print(colored("Adding Google Chrome repository...", "yellow"))
-                    self.run_command("sudo dnf config-manager --add-repo https://dl.google.com/linux/chrome/rpm/stable/x86_64")
-                    self.run_command("sudo rpm --import https://dl.google.com/linux/linux_signing_key.pub")
-                elif distro_family == 'arch':
-                    print(colored("Installing Google Chrome using yay...", "yellow"))
-                    if self.command_exists('yay'):
-                        self.run_command("yay -S --noconfirm google-chrome")
+                    
+                    # Step 2: Install based on package manager and distribution
+                    print(colored("Installing Google Chrome...", "yellow"))
+                    success = False
+                    
+                    if distro_family in ['debian', 'ubuntu'] or self.package_manager['name'] in ['apt', 'apt-get']:
+                        # For Debian/Ubuntu/Kali/ParrotOS
+                        try:
+                            # First install dependencies that Chrome needs
+                            deps = "libappindicator1 libindicator7 libxss1 fonts-liberation libappindicator3-1 libasound2 libatk-bridge2.0-0 libgtk-3-0 libgbm1 xdg-utils"
+                            self.run_command(f"sudo apt-get update && sudo apt-get install -y {deps}")
+                        except Exception:
+                            print(colored("Attempting to install dependencies with alternative method...", "yellow"))
+                            # Some packages might have different names in different distributions
+                            try:
+                                alternative_deps = "libxss1 fonts-liberation libasound2 libatk-bridge2.0-0 libgbm1 libgtk-3-0 xdg-utils"
+                                self.run_command(f"sudo apt-get update && sudo apt-get install -y {alternative_deps}")
+                            except Exception:
+                                print(colored("Continuing without installing all dependencies...", "yellow"))
+                        
+                        # Install the .deb package
+                        try:
+                            # First try with dpkg
+                            self.run_command(f"sudo dpkg -i {chrome_deb}")
+                            # Fix any dependency issues
+                            self.run_command("sudo apt-get install -f -y")
+                            # Verify installation
+                            if self.command_exists('google-chrome-stable'):
+                                success = True
+                            else:
+                                # Try direct apt install as a fallback
+                                self.run_command(f"sudo apt install {chrome_deb} -y")
+                                success = self.command_exists('google-chrome-stable')
+                        except Exception as e:
+                            print(colored(f"Error during Chrome installation: {str(e)}", "red"))
+                            
+                    elif distro_family == 'fedora' or self.package_manager['name'] in ['dnf', 'yum']:
+                        # For Fedora/RHEL based
+                        try:
+                            # Convert .deb to .rpm using alien
+                            print(colored("Converting .deb package to .rpm...", "yellow"))
+                            self.run_command("sudo dnf install alien -y")
+                            self.run_command(f"sudo alien --to-rpm {chrome_deb}")
+                            rpm_file = self.run_command("find . -name '*.rpm'", capture_output=True)
+                            if rpm_file:
+                                self.run_command(f"sudo dnf install {rpm_file} -y")
+                                success = self.command_exists('google-chrome-stable')
+                        except Exception as e:
+                            print(colored(f"Error converting or installing RPM: {str(e)}", "red"))
+                            
+                            # Try adding Google repository directly
+                            try:
+                                print(colored("Trying repository method...", "yellow"))
+                                self.run_command("sudo dnf config-manager --add-repo https://dl.google.com/linux/chrome/rpm/stable/x86_64")
+                                self.run_command("sudo rpm --import https://dl.google.com/linux/linux_signing_key.pub")
+                                self.run_command("sudo dnf install google-chrome-stable -y")
+                                success = self.command_exists('google-chrome-stable')
+                            except Exception:
+                                pass
+                            
+                    elif distro_family == 'arch' or self.package_manager['name'] == 'pacman':
+                        # For Arch-based systems
+                        try:
+                            # Try using AUR helper if available
+                            if self.command_exists('yay'):
+                                self.run_command("yay -S --noconfirm google-chrome")
+                                success = self.command_exists('google-chrome')
+                            elif self.command_exists('pamac'):
+                                self.run_command("pamac install google-chrome --no-confirm")
+                                success = self.command_exists('google-chrome')
+                            else:
+                                # Manual AUR installation
+                                print(colored("Installing from AUR manually...", "yellow"))
+                                self.run_command("git clone https://aur.archlinux.org/google-chrome.git /tmp/google-chrome")
+                                self.run_command("cd /tmp/google-chrome && makepkg -si --noconfirm")
+                                success = self.command_exists('google-chrome')
+                        except Exception as e:
+                            print(colored(f"Error installing Chrome on Arch: {str(e)}", "red"))
+                            
+                    elif distro_family == 'opensuse' or self.package_manager['name'] == 'zypper':
+                        # For openSUSE
+                        try:
+                            self.run_command("sudo rpm --import https://dl.google.com/linux/linux_signing_key.pub")
+                            self.run_command("sudo zypper addrepo http://dl.google.com/linux/chrome/rpm/stable/x86_64 google-chrome")
+                            self.run_command("sudo zypper refresh")
+                            self.run_command("sudo zypper install -y google-chrome-stable")
+                            success = self.command_exists('google-chrome-stable')
+                        except Exception as e:
+                            print(colored(f"Error installing Chrome on openSUSE: {str(e)}", "red"))
+                    
                     else:
-                        print(colored("yay is not installed. Installing from AUR helper...", "yellow"))
-                        self.run_command("git clone https://aur.archlinux.org/google-chrome.git /tmp/google-chrome")
-                        self.run_command("cd /tmp/google-chrome && makepkg -si --noconfirm")
-                    return True
-            
-            elif browser_id == 'brave':
-                if distro_family in ['debian', 'ubuntu']:
+                        # Generic approach for other distributions - try with dpkg and apt
+                        print(colored("Using generic installation approach...", "yellow"))
+                        try:
+                            # Try to use dpkg and apt-get first as many distributions have compatibility
+                            self.run_command(f"sudo dpkg -i {chrome_deb}")
+                            self.run_command("sudo apt-get install -f -y")
+                            success = self.command_exists('google-chrome-stable')
+                        except Exception:
+                            # Try gdebi as another option
+                            try:
+                                self.run_command("sudo apt-get install gdebi-core -y")
+                                self.run_command(f"sudo gdebi --non-interactive {chrome_deb}")
+                                success = self.command_exists('google-chrome-stable')
+                            except Exception as e:
+                                print(colored(f"Failed to install Chrome using generic methods: {str(e)}", "red"))
+                    
+                    # Cleanup
                     try:
-                        print(colored("Adding Brave Browser repository...", "yellow"))
-                        self.run_command("sudo apt install apt-transport-https curl -y")
-                        self.run_command("sudo curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg")
-                        self.run_command("echo 'deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg arch=amd64] https://brave-browser-apt-release.s3.brave.com/ stable main' | sudo tee /etc/apt/sources.list.d/brave-browser-release.list")
-                        self.run_command("sudo apt update")
-                    except Exception as e:
-                        print(colored(f"Failed to add Brave repository: {str(e)}", "red"))
+                        self.run_command(f"rm -rf {temp_dir}")
+                    except:
+                        pass
+                    
+                    if success:
+                        print(colored("Google Chrome installed successfully!", "green"))
+                        # Update installed browsers
+                        self.installed_browsers = self.detect_installed_browsers()
+                        return True
+                    else:
+                        # Last resort - try using flatpak or snap if available
+                        if self.command_exists('flatpak'):
+                            print(colored("Attempting installation via Flatpak...", "yellow"))
+                            self.run_command("flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo")
+                            if self.run_command("flatpak install flathub com.google.Chrome -y"):
+                                print(colored("Google Chrome installed successfully via Flatpak!", "green"))
+                                self.installed_browsers = self.detect_installed_browsers()
+                                return True
+                        
+                        if self.command_exists('snap'):
+                            print(colored("Attempting installation via Snap...", "yellow"))
+                            if self.run_command("sudo snap install google-chrome"):
+                                print(colored("Google Chrome installed successfully via Snap!", "green"))
+                                self.installed_browsers = self.detect_installed_browsers()
+                                return True
+                        
+                        print(colored("All installation methods failed. Please install Chrome manually.", "red"))
                         return False
-                elif distro_family == 'fedora':
-                    print(colored("Adding Brave Browser repository...", "yellow"))
-                    self.run_command("sudo dnf config-manager --add-repo https://brave-browser-rpm-release.s3.brave.com/x86_64/")
-                    self.run_command("sudo rpm --import https://brave-browser-rpm-release.s3.brave.com/brave-core.asc")
-            
-            elif browser_id == 'tor-browser':
-                if distro_family in ['debian', 'ubuntu']:
-                    print(colored("Adding universe repository and updating...", "yellow"))
-                    self.run_command("sudo apt install -y apt-transport-https")
-                    self.run_command("sudo add-apt-repository universe")
-                    self.run_command("sudo apt update")
-                elif distro_family == 'arch':
-                    # For Arch Linux, tor-browser is in the community repository
-                    package_names = ['tor-browser']
-            
-            # Install using the system package manager
-            for package_name in package_names:
-                print(colored(f"Installing {package_name}...", "yellow"))
-                install_command = f"sudo {self.package_manager['install']} {package_name}"
-                if self.run_command(install_command):
-                    print(colored(f"{browser['name']} installed successfully!", "green"))
+                
+                except Exception as e:
+                    print(colored(f"Unexpected error during Chrome installation: {str(e)}", "red"))
+                    return False
                     
-                    # Post-installation setup for Tor Browser
-                    if browser_id == 'tor-browser':
-                        print(colored("Launching Tor Browser setup...", "yellow"))
-                        self.run_command("torbrowser-launcher")
+            # Continue with other browsers installation
+            elif browser_id == 'brave':
+                # Special handling for Brave browser
+                try:
+                    print(colored("Setting up Brave browser repository...", "yellow"))
+                    if distro_family in ['debian', 'ubuntu'] or self.package_manager['name'] in ['apt', 'apt-get']:
+                        # For Debian/Ubuntu/Kali/ParrotOS
+                        try:
+                            # Install dependencies
+                            self.run_command("sudo apt-get install apt-transport-https curl gnupg -y")
+                            # Add Brave repository
+                            self.run_command("sudo curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg")
+                            arch = self.run_command("dpkg --print-architecture", capture_output=True) or "amd64"
+                            self.run_command(f'echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" | sudo tee /etc/apt/sources.list.d/brave-browser-release.list')
+                            # Update and install
+                            self.run_command("sudo apt-get update")
+                            self.run_command("sudo apt-get install brave-browser -y")
+                            success = self.command_exists('brave-browser')
+                        except Exception as e:
+                            print(colored(f"Error during Brave repository setup: {str(e)}", "red"))
+                            success = False
                     
-                    self.installed_browsers = self.detect_installed_browsers()
-                    return True
-            
-            print(colored(f"Failed to install {browser['name']}", "red"))
-            return False
-            
+                    elif distro_family == 'fedora' or self.package_manager['name'] in ['dnf', 'yum']:
+                        # For Fedora/RHEL based
+                        try:
+                            # Add the repository
+                            self.run_command("sudo dnf config-manager --add-repo https://brave-browser-rpm-release.s3.brave.com/x86_64/")
+                            self.run_command("sudo rpm --import https://brave-browser-rpm-release.s3.brave.com/brave-core.asc")
+                            # Install the browser
+                            self.run_command("sudo dnf install brave-browser -y")
+                            success = self.command_exists('brave-browser')
+                        except Exception as e:
+                            print(colored(f"Error installing Brave on Fedora: {str(e)}", "red"))
+                            success = False
+                            
+                    elif distro_family == 'arch' or self.package_manager['name'] == 'pacman':
+                        # For Arch-based systems
+                        try:
+                            if self.command_exists('yay'):
+                                self.run_command("yay -S brave-bin --noconfirm")
+                            elif self.command_exists('pamac'):
+                                self.run_command("pamac build brave-bin --no-confirm")
+                            else:
+                                # Manual AUR installation
+                                print(colored("Installing from AUR manually...", "yellow"))
+                                self.run_command("git clone https://aur.archlinux.org/brave-bin.git /tmp/brave-bin")
+                                self.run_command("cd /tmp/brave-bin && makepkg -si --noconfirm")
+                            success = self.command_exists('brave')
+                        except Exception as e:
+                            print(colored(f"Error installing Brave on Arch: {str(e)}", "red"))
+                            success = False
+                    
+                    else:
+                        # Fallback for other distributions - try snap/flatpak
+                        success = False
+                        print(colored("No direct installation method for this distribution. Trying alternatives...", "yellow"))
+                    
+                    if not success:
+                        # Try using flatpak or snap if traditional methods fail
+                        if self.command_exists('flatpak'):
+                            print(colored("Attempting installation via Flatpak...", "yellow"))
+                            self.run_command("flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo")
+                            if self.run_command("flatpak install flathub com.brave.Browser -y"):
+                                print(colored("Brave Browser installed successfully via Flatpak!", "green"))
+                                self.installed_browsers = self.detect_installed_browsers()
+                                return True
+                        
+                        if self.command_exists('snap'):
+                            print(colored("Attempting installation via Snap...", "yellow"))
+                            if self.run_command("sudo snap install brave"):
+                                print(colored("Brave Browser installed successfully via Snap!", "green"))
+                                self.installed_browsers = self.detect_installed_browsers()
+                                return True
+                                
+                    if success:
+                        print(colored("Brave Browser installed successfully!", "green"))
+                        self.installed_browsers = self.detect_installed_browsers()
+                        return True
+                    else:
+                        print(colored("All installation methods failed. Please install Brave manually.", "red"))
+                        return False
+                        
+                except Exception as e:
+                    print(colored(f"Unexpected error during Brave installation: {str(e)}", "red"))
+                    return False
+                    
+            # Standard installation for other browsers
+            else:
+                try:
+                    # Try installing using the system's package manager
+                    if distro_family in ['debian', 'ubuntu'] or self.package_manager['name'] in ['apt', 'apt-get']:
+                        # For Debian/Ubuntu based
+                        for package_name in package_names:
+                            try:
+                                self.run_command(f"sudo apt-get update")
+                                self.run_command(f"sudo apt-get install {package_name} -y")
+                                if self.command_exists(package_name) or self.run_command(f"dpkg -l | grep -q {package_name}", capture_output=False):
+                                    print(colored(f"{browser['name']} installed successfully!", "green"))
+                                    self.installed_browsers = self.detect_installed_browsers()
+                                    return True
+                            except Exception:
+                                continue
+                    
+                    elif distro_family == 'fedora' or self.package_manager['name'] in ['dnf', 'yum']:
+                        # For Fedora/RHEL based
+                        for package_name in package_names:
+                            try:
+                                self.run_command(f"sudo dnf install {package_name} -y")
+                                if self.command_exists(package_name.split('-')[0]) or self.run_command(f"rpm -q {package_name}", capture_output=False):
+                                    print(colored(f"{browser['name']} installed successfully!", "green"))
+                                    self.installed_browsers = self.detect_installed_browsers()
+                                    return True
+                            except Exception:
+                                continue
+                    
+                    elif distro_family == 'arch' or self.package_manager['name'] == 'pacman':
+                        # For Arch-based systems
+                        for package_name in package_names:
+                            try:
+                                self.run_command(f"sudo pacman -S {package_name} --noconfirm")
+                                if self.command_exists(package_name.split('-')[0]) or self.run_command(f"pacman -Q {package_name}", capture_output=False):
+                                    print(colored(f"{browser['name']} installed successfully!", "green"))
+                                    self.installed_browsers = self.detect_installed_browsers()
+                                    return True
+                            except Exception:
+                                # Try AUR if official repos fail
+                                try:
+                                    if self.command_exists('yay'):
+                                        self.run_command(f"yay -S {package_name} --noconfirm")
+                                    elif self.command_exists('pamac'):
+                                        self.run_command(f"pamac build {package_name} --no-confirm")
+                                    else:
+                                        continue
+                                    
+                                    if self.command_exists(package_name.split('-')[0]):
+                                        print(colored(f"{browser['name']} installed successfully!", "green"))
+                                        self.installed_browsers = self.detect_installed_browsers()
+                                        return True
+                                except Exception:
+                                    continue
+                    
+                    elif distro_family == 'opensuse' or self.package_manager['name'] == 'zypper':
+                        # For openSUSE
+                        for package_name in package_names:
+                            try:
+                                self.run_command(f"sudo zypper install -y {package_name}")
+                                if self.command_exists(package_name.split('-')[0]) or self.run_command(f"rpm -q {package_name}", capture_output=False):
+                                    print(colored(f"{browser['name']} installed successfully!", "green"))
+                                    self.installed_browsers = self.detect_installed_browsers()
+                                    return True
+                            except Exception:
+                                continue
+                    
+                    # If we get here, system package manager installation failed or not supported
+                    # Try using flatpak or snap if available
+                    if installation_type == 'system': 
+                        print(colored("System package installation failed. Trying alternative methods...", "yellow"))
+                        
+                        if self.command_exists('flatpak'):
+                            print(colored("Attempting installation via Flatpak...", "yellow"))
+                            self.run_command("flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo")
+                            if self.run_command(f"flatpak install flathub {browser['flatpak']} -y"):
+                                print(colored(f"{browser['name']} installed successfully via Flatpak!", "green"))
+                                self.installed_browsers = self.detect_installed_browsers()
+                                return True
+                        
+                        if self.command_exists('snap'):
+                            print(colored("Attempting installation via Snap...", "yellow"))
+                            if self.run_command(f"sudo snap install {browser['snap']}"):
+                                print(colored(f"{browser['name']} installed successfully via Snap!", "green"))
+                                self.installed_browsers = self.detect_installed_browsers()
+                                return True
+                    
+                    print(colored(f"Failed to install {browser['name']}. Please install it manually.", "red"))
+                    return False
+                    
+                except Exception as e:
+                    print(colored(f"Error during installation: {str(e)}", "red"))
+                    return False
+        
         elif installation_type == 'snap':
             # Install using Snap
-            package_name = browser['snap']
-            install_command = f"sudo snap install {package_name}"
-            
+            if self.command_exists('snap'):
+                try:
+                    self.run_command(f"sudo snap install {browser['snap']}")
+                    print(colored(f"{browser['name']} installed successfully via Snap!", "green"))
+                    self.installed_browsers = self.detect_installed_browsers()
+                    return True
+                except Exception as e:
+                    print(colored(f"Error during Snap installation: {str(e)}", "red"))
+                    return False
+            else:
+                print(colored("Snap is not installed on your system. Please install it first.", "red"))
+                return False
+                
         elif installation_type == 'flatpak':
-            # Add Flathub repository if not already added
-            if not self.run_command("flatpak remotes | grep -q flathub"):
-                self.run_command("flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo")
-            
             # Install using Flatpak
-            package_name = browser['flatpak']
-            install_command = f"flatpak install flathub {package_name} -y"
-        
-        else:
-            print(colored("Invalid installation type", "red"))
-            return False
-        
-        print(colored(f"Running: {install_command}", "yellow"))
-        if self.run_command(install_command):
-            print(colored(f"{browser['name']} installed successfully!", "green"))
-            self.installed_browsers = self.detect_installed_browsers()
-            return True
-        else:
-            print(colored(f"Failed to install {browser['name']}", "red"))
-            return False
+            if self.command_exists('flatpak'):
+                try:
+                    self.run_command("flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo")
+                    self.run_command(f"flatpak install flathub {browser['flatpak']} -y")
+                    print(colored(f"{browser['name']} installed successfully via Flatpak!", "green"))
+                    self.installed_browsers = self.detect_installed_browsers()
+                    return True
+                except Exception as e:
+                    print(colored(f"Error during Flatpak installation: {str(e)}", "red"))
+                    return False
+            else:
+                print(colored("Flatpak is not installed on your system. Please install it first.", "red"))
+                return False
+                
+        return False
 
     def command_exists(self, command):
         """Check if a command exists in the system"""
